@@ -764,6 +764,8 @@ exports.getUpcomingSessionsFromView = async (
 			'mentor_organization_id',
 			'created_at',
 			'mentor_name',
+			'seats_limit',
+			'seats_remaining',
 			"(meeting_info - 'link') AS meeting_info",
 		]
 
