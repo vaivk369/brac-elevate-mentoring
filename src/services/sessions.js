@@ -105,11 +105,47 @@ module.exports = class SessionsHelper {
 	 * @param {Object} bodyData 			- Session creation data.
 	 * @param {String} loggedInUserId 		- logged in user id.
 	 * @param {Boolean} isAMentor 			- indicates if user is mentor or not
+	 * @param {Array} [roles] 				- logged in user's roles (used for the supervisor-approval gate).
+	 * @param {Boolean} [skipApprovalGate] 	- bypasses the supervisor-approval gate; used when replaying
+	 * 										  a previously-approved session-approval-request.
 	 * @returns {JSON} 						- Create session data.
 	 */
 
-	static async create(bodyData, loggedInUserId, orgId, orgCode, isAMentor, notifyUser, tenantCode) {
+	static async create(
+		bodyData,
+		loggedInUserId,
+		orgId,
+		orgCode,
+		isAMentor,
+		notifyUser,
+		tenantCode,
+		roles = [],
+		skipApprovalGate = false
+	) {
 		try {
+			// Supervisor-approval gate: an org_admin (LC) requesting a session whose
+			// support_offering_type is 'asset' must have the request approved by their
+			// supervisor before the session is actually created.
+			if (
+				!skipApprovalGate &&
+				bodyData.support_offering_type === common.SUPPORT_OFFERING_TYPE.ASSET &&
+				Array.isArray(roles) &&
+				roles.some((role) => role.title === common.ORG_ADMIN_ROLE)
+			) {
+				// Required lazily to avoid a circular require with sessionApprovalRequests.js,
+				// which itself requires this file to replay session creation on approval.
+				const sessionApprovalRequestsService = require('@services/sessionApprovalRequests')
+				return await sessionApprovalRequestsService.create(
+					bodyData,
+					loggedInUserId,
+					orgId,
+					orgCode,
+					isAMentor,
+					notifyUser,
+					tenantCode
+				)
+			}
+
 			let skipValidation = bodyData.type == common.SESSION_TYPE.PRIVATE ? true : false
 			// check if session mentor is added in the mentee list
 			if (bodyData?.mentees?.includes(bodyData?.mentor_id)) {

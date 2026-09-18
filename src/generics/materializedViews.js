@@ -17,6 +17,42 @@ const userExtensionQueries = require('@database/queries/userExtension')
 
 let refreshInterval
 
+const ensureTransformJsonbToTextArrayFunction = async () => {
+	const createFunctionSQL = `
+		CREATE OR REPLACE FUNCTION public.transform_jsonb_to_text_array(input_jsonb jsonb)
+		RETURNS text[]
+		AS $$
+		DECLARE
+			result text[] := ARRAY[]::text[];
+			element text;
+		BEGIN
+			IF input_jsonb IS NULL THEN
+				RETURN result;
+			ELSIF jsonb_typeof(input_jsonb) = 'object' THEN
+				FOR element IN SELECT jsonb_object_keys(input_jsonb)
+				LOOP
+					result := array_append(result, element);
+				END LOOP;
+			ELSIF jsonb_typeof(input_jsonb) = 'array' THEN
+				FOR element IN SELECT jsonb_array_elements_text(input_jsonb)
+				LOOP
+					result := array_append(result, element);
+				END LOOP;
+			END IF;
+			RETURN result;
+		END;
+		$$ LANGUAGE plpgsql;
+	`
+
+	try {
+		await sequelize.query(createFunctionSQL)
+		logger.info('Ensured public.transform_jsonb_to_text_array exists')
+	} catch (error) {
+		logger.error(`Error ensuring transform_jsonb_to_text_array function: ${error.message}`)
+		throw error
+	}
+}
+
 const groupByModelNames = async (entityTypes) => {
 	const groupedData = new Map()
 	entityTypes.forEach((item) => {
@@ -378,6 +414,7 @@ const getAllowFilteringEntityTypes = async (tenantCode) => {
 
 const triggerViewBuild = async (tenantCode) => {
 	try {
+		await ensureTransformJsonbToTextArrayFunction()
 		const allowFilteringEntityTypes = await getAllowFilteringEntityTypes(tenantCode)
 		const entityTypesGroupedByModel = await groupByModelNames(allowFilteringEntityTypes)
 
@@ -496,6 +533,7 @@ const triggerPeriodicViewRefresh = async (tenantCode) => {
 
 const checkAndCreateMaterializedViews = async () => {
 	try {
+		await ensureTransformJsonbToTextArrayFunction()
 		await sequelize.query('CREATE EXTENSION IF NOT EXISTS pg_trgm;', {
 			type: sequelize.QueryTypes.SELECT,
 		})
@@ -694,7 +732,6 @@ const scheduleViewRefreshJob = (tenantCode, modelName, interval) => {
 	const encodedParams = encodeURIComponent(`${tenantCode}|${modelName}`)
 	const urlEndpoint = `/mentoring/v1/admin/triggerPeriodicViewRefreshInternal/${encodedParams}`
 	const offset = getStableOffset(tenantCode, modelName, interval)
-
 	schedulerRequests.createSchedulerJob(jobId, null, jobName, {}, urlEndpoint, 'get', {
 		jobId: jobId,
 		repeat: { every: Number(interval), offset },

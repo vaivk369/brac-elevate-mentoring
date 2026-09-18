@@ -19,7 +19,7 @@ exports.getSessionsMapping = async (userId, status, tenantCode) => {
 		const escapedUserId = sequelize.escape(strUserId)
 
 		let statusList = []
-		if (!status) {
+		if (!status || status.length == 0) {
 			statusList = [
 				common.CONNECTIONS_STATUS.ACCEPTED,
 				common.CONNECTIONS_STATUS.REQUESTED,

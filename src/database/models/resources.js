@@ -34,6 +34,10 @@ module.exports = (sequelize, DataTypes) => {
 				allowNull: true,
 				defaultValue: null,
 			},
+			meta: {
+				type: DataTypes.JSONB,
+				allowNull: true,
+			},
 			created_by: {
 				type: DataTypes.STRING,
 				allowNull: true,
