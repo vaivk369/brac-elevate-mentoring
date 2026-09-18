@@ -56,6 +56,10 @@ module.exports = (sequelize, DataTypes) => {
 				type: DataTypes.DATE,
 				defaultValue: DataTypes.NOW,
 			},
+			meta: {
+				type: DataTypes.JSONB,
+				allowNull: true,
+			},
 		},
 		{ sequelize, modelName: 'Resources', tableName: 'resources', freezeTableName: true, paranoid: true }
 	)
