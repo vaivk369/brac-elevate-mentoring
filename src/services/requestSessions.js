@@ -235,7 +235,7 @@ module.exports = class requestSessionsHelper {
 	 * @param {number} pageSize - The number of records per page.
 	 * @returns {Promise<Object>} The list of pending session requests.
 	 */
-	static async list(userId, pageNo, pageSize, status, tenantCode, onlyRequested = false) {
+	static async list(userId, pageNo, pageSize, status, tenantCode, onlyRequested = false, query = {}) {
 		try {
 			// Get requests sent by me (requestor_id = userId)
 			const allRequestSession = await sessionRequestQueries.getAllRequests(userId, status, tenantCode)
@@ -253,6 +253,31 @@ module.exports = class requestSessionsHelper {
 			} else {
 				combinedData = sessionRequestData
 			}
+
+			// Dynamically filter by entity types or metadata parameters passed in query
+			const reservedParams = new Set([
+				'pageNo',
+				'pageSize',
+				'status',
+				'onlyRequested',
+				'SkipValidation',
+				'searchText',
+			])
+			const filterKeys = Object.keys(query).filter(
+				(key) => !reservedParams.has(key) && query[key] !== undefined && query[key] !== ''
+			)
+
+			if (filterKeys.length > 0) {
+				combinedData = combinedData.filter((session) =>
+					filterKeys.every((key) => {
+						const val = session?.meta?.[key] ?? session?.[key]
+						return Array.isArray(val)
+							? val.includes(query[key])
+							: String(val).toLowerCase() === String(query[key]).toLowerCase()
+					})
+				)
+			}
+
 			// Sort combined data by created_at in descending order (most recent first)
 			combinedData.sort((a, b) => {
 				const dateA = new Date(a.created_at)
@@ -278,9 +303,23 @@ module.exports = class requestSessionsHelper {
 
 			let data
 			if (!onlyRequested) {
-				const oppositeUserIds = paginatedData.map((s) =>
-					s.requestor_id === userId ? s.requestee_id : s.requestor_id
-				)
+				let oppositeUserIds = []
+				paginatedData.forEach((s) => {
+					const isSent = String(s.requestor_id) === String(userId)
+					if (isSent) {
+						if (Array.isArray(s.requestees) && s.requestees.length > 0) {
+							oppositeUserIds.push(...s.requestees)
+						} else if (s.requestee_id) {
+							oppositeUserIds.push(s.requestee_id)
+						}
+					} else {
+						if (s.requestor_id) {
+							oppositeUserIds.push(s.requestor_id)
+						}
+					}
+				})
+
+				oppositeUserIds = [...new Set(oppositeUserIds.filter(Boolean).map(String))]
 
 				let oppositeUserDetails = await userExtensionQueries.getUsersByUserIds(
 					oppositeUserIds,
@@ -302,10 +341,8 @@ module.exports = class requestSessionsHelper {
 					tenantCode
 				)
 
-				const userDetailsMap = Object.fromEntries(oppositeUserDetails.map((u) => [u.user_id, u]))
-				const userIds = oppositeUserIds.map((id) => String(id))
-
-				const userDetails = await userExtensionQueries.getUsersByUserIds(userIds, {}, tenantCode, true)
+				const userDetailsMap = Object.fromEntries(oppositeUserDetails.map((u) => [String(u.user_id), u]))
+				const userDetails = await userExtensionQueries.getUsersByUserIds(oppositeUserIds, {}, tenantCode, true)
 
 				await Promise.all(
 					userDetails.map(async (u) => {
@@ -317,21 +354,51 @@ module.exports = class requestSessionsHelper {
 
 				data = paginatedData
 					.map((session) => {
-						const isSent = session.requestor_id === userId
-						const oppositeUserId = isSent ? session.requestee_id : session.requestor_id
-						const user = userDetailsMap[oppositeUserId]
-						const fullUser = fullMap.get(String(oppositeUserId))
+						const isSent = String(session.requestor_id) === String(userId)
+						let user_details = null
 
-						if (user && fullUser) {
-							user.image = fullUser.image
-							return {
-								...session,
-								id: String(session.id),
-								user_details: user,
-								request_type: isSent ? 'sent' : 'received',
+						if (isSent) {
+							if (Array.isArray(session.requestees) && session.requestees.length > 0) {
+								user_details = session.requestees
+									.map((id) => {
+										const strId = String(id)
+										const user = userDetailsMap[strId]
+										const fullUser = fullMap.get(strId)
+										if (user && fullUser) {
+											return { ...user, image: fullUser.image }
+										}
+										return user || fullUser || null
+									})
+									.filter(Boolean)
+							} else if (session.requestee_id) {
+								const strId = String(session.requestee_id)
+								const user = userDetailsMap[strId]
+								const fullUser = fullMap.get(strId)
+								if (user && fullUser) {
+									user.image = fullUser.image
+									user_details = user
+								} else {
+									user_details = user || fullUser || null
+								}
+							}
+						} else {
+							const strId = String(session.requestor_id)
+							const user = userDetailsMap[strId]
+							const fullUser = fullMap.get(strId)
+							if (user && fullUser) {
+								user.image = fullUser.image
+								user_details = user
+							} else {
+								user_details = user || fullUser || null
 							}
 						}
-						return null
+
+						return {
+							...session,
+							id: String(session.id),
+							user_details,
+							request_type: isSent ? 'sent' : 'received',
+						}
 					})
 					.filter(Boolean)
 			} else {
